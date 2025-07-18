@@ -8,6 +8,7 @@
     state/0,
     args/0,
     opts/0,
+    error_reason/0,
     handle_result/0
 ]).
 
@@ -26,10 +27,18 @@
 %% Options for start_link/4 (extended later as needed).
 -type opts()    :: #{path := klsn:binstr()}.
 
+%% Error reason recognised by the framework and converted to a JSON-RPC error
+%% object.
+-type error_reason() ::
+        parse_error | invalid_request | method_not_found | invalid_params |
+        internal_error | server_error | capability_denied |
+        {jsonrpc2, integer(), klsn:binstr()} |
+        {jsonrpc2, integer(), klsn:binstr(), payload()}.
+
 %% Return value of handle/3.
 -type handle_result() :: {reply, payload(), state()} |
                         {noreply, state()}          |
-                        {error, term()}.
+                        {error, error_reason()}.
 
 %% Behaviour callbacks --------------------------------------------------
 

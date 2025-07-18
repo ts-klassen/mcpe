@@ -33,4 +33,4 @@
 
 -callback descriptor() -> descriptor().
 
--callback execute(payload(), ctx()) -> {ok, payload()} | {error, term()}.
+-callback execute(payload(), ctx()) -> {ok, payload()} | {error, mcpe_server:error_reason()}.
