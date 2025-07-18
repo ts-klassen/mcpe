@@ -12,7 +12,7 @@ all() -> [tools_lifecycle].
 
 init_per_suite(Config) ->
     Port = 8080,
-    ToolModules = [sample_tool],
+    ToolModules = [mcpe_sample_tool],
 
     {ok, Pid} = mcpe_server:start_link(Port,
                                        mcpe_tools_server,
@@ -52,20 +52,3 @@ tools_lifecycle(Config) ->
 
     ok.
 
-%%=====================================================================
-%% Sample tool module (would normally live in src/)
-%%=====================================================================
-% 
-% -module(sample_tool).
-% 
-% -behaviour(mcpe_tool).
-% 
-% -export([descriptor/0, execute/2]).
-% 
-% descriptor() ->
-%     #{ name        => <<"sample">>,
-%        description => <<"A dummy tool for testing">>,
-%        parameters  => #{} }.
-% 
-% execute(_Args, _Ctx) ->
-%     {ok, <<"done">> }.

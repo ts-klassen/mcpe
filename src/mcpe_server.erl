@@ -50,5 +50,43 @@
 
 -spec start_link(inet:port_number(), module(), args(), opts()) ->
           {ok, pid()} | {error, term()}.
-start_link(_Port, _CallbackModule, _Args, _Opts) ->
-    todo.
+start_link(Port, CallbackModule, Args, Opts) ->
+    %% Ensure the callback module is loaded so function_exported works.
+    _ = code:ensure_loaded(CallbackModule),
+    %% Validate and initialise the callback implementation.
+    case erlang:function_exported(CallbackModule, init, 1) andalso
+         erlang:function_exported(CallbackModule, handle, 3) of
+        false ->
+            {error, {invalid_callback_module, CallbackModule}};
+        true ->
+            case catch CallbackModule:init(Args) of
+                {'EXIT', Reason} -> {error, {init_failed, Reason}};
+                {ok, CBState} ->
+                    PathBin = maps:get(path, Opts, <<"/">>),
+                    PathStr = binary_to_list(PathBin),
+
+                    Dispatch = cowboy_router:compile([
+                        {'_', [], [{PathStr, mcpe_http_handler,
+                                   #{callback_module => CallbackModule,
+                                     callback_state => CBState}}]}
+                    ]),
+
+                    %% Ensure cowboy application is running.
+                    application:ensure_all_started(cowboy),
+
+                    case cowboy:start_clear(make_ref(PathBin, Port),
+                                             [{port, Port}],
+                                             #{env => #{dispatch => Dispatch}}) of
+                        {ok, Pid} -> {ok, Pid};
+                        {error, Reason} = Err -> Err
+                    end
+            end
+    end.
+
+%% Generate a unique listener name based on path + port so multiple test
+%% suites can run concurrently.
+-spec make_ref(binary(), inet:port_number()) -> atom().
+make_ref(Path, Port) ->
+    NameStr = lists:flatten(["mcpe_listener_", integer_to_list(Port), "_",
+                             integer_to_list(erlang:phash2(Path))]),
+    list_to_atom(NameStr).
