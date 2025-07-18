@@ -10,9 +10,23 @@
 
 all() -> [tools_lifecycle].
 
+%%--------------------------------------------------------------------
+%% @doc
+%% Find a free TCP port on the local machine by letting the OS allocate
+%% a random available port (by binding to port 0). The chosen port is
+%% returned and can subsequently be used to start listeners without the
+%% risk of running into port collisions during parallel test runs.
+%%--------------------------------------------------------------------
+
+find_free_port() ->
+    {ok, Listen} = gen_tcp:listen(0, [{reuseaddr, true}]),
+    {ok, Port} = inet:port(Listen),
+    ok = gen_tcp:close(Listen),
+    Port.
+
 init_per_suite(Config) ->
-    Port = 8080,
-    ToolModules = [sample_tool],
+    Port = find_free_port(),
+    ToolModules = [mcpe_sample_tool],
 
     {ok, Pid} = mcpe_server:start_link(Port,
                                        mcpe_tools_server,
@@ -52,20 +66,3 @@ tools_lifecycle(Config) ->
 
     ok.
 
-%%=====================================================================
-%% Sample tool module (would normally live in src/)
-%%=====================================================================
-% 
-% -module(sample_tool).
-% 
-% -behaviour(mcpe_tool).
-% 
-% -export([descriptor/0, execute/2]).
-% 
-% descriptor() ->
-%     #{ name        => <<"sample">>,
-%        description => <<"A dummy tool for testing">>,
-%        parameters  => #{} }.
-% 
-% execute(_Args, _Ctx) ->
-%     {ok, <<"done">> }.

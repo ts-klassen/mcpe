@@ -50,5 +50,85 @@
 
 -spec start_link(inet:port_number(), module(), args(), opts()) ->
           {ok, pid()} | {error, term()}.
-start_link(_Port, _CallbackModule, _Args, _Opts) ->
-    todo.
+start_link(Port, CallbackModule, Args, Opts) ->
+    %% Ensure the callback module is loaded so function_exported works.
+    _ = code:ensure_loaded(CallbackModule),
+    %% Validate and initialise the callback implementation.
+    case erlang:function_exported(CallbackModule, init, 1) andalso
+         erlang:function_exported(CallbackModule, handle, 3) of
+        false ->
+            {error, {invalid_callback_module, CallbackModule}};
+        true ->
+            %% Initialise the callback module, catching only exits.
+            InitRes =
+                try CallbackModule:init(Args) of
+                    {ok, CBState0} -> {ok, CBState0}
+                catch
+                    exit:R -> {error, {init_failed, R}}
+                end,
+
+            case InitRes of
+                {error, _} = Err -> Err;
+                {ok, CBState} ->
+                    PathBin = maps:get(path, Opts, <<"/">>),
+                    PathStr = binary_to_list(PathBin),
+
+                    Dispatch = cowboy_router:compile([
+                        {'_', [], [{PathStr, mcpe_http_handler,
+                                   #{callback_module => CallbackModule,
+                                     callback_state => CBState}}]}
+                    ]),
+
+                    %% Ensure cowboy application is running.
+                    application:ensure_all_started(cowboy),
+
+                    case cowboy:start_clear(make_ref(PathBin, Port),
+                                             [{port, Port}],
+                                             #{env => #{dispatch => Dispatch}}) of
+                        {ok, Pid} ->
+                            {ok, Pid};
+
+                        {error, _Reason} = Err ->
+                            maybe_cleanup(CallbackModule, CBState),
+                            Err
+                    end
+            end
+    end.
+
+%% Generate a unique listener name based on path + port so multiple test
+%% suites can run concurrently.
+-spec make_ref(binary(), inet:port_number()) -> atom().
+make_ref(Path, Port) ->
+    %% Add a unique component to avoid collisions when the function is called
+    %% multiple times with the same Path/Port combination (for example when
+    %% starting and stopping listeners rapidly in tests). We rely on
+    %% erlang:unique_integer/1 which returns a monotonically increasing
+    %% integer that is unique to the Erlang VM instance.
+    Unique = erlang:unique_integer([monotonic, positive]),
+    NameStr = lists:flatten([
+        "mcpe_listener_",
+        integer_to_list(Port),
+        "_",
+        integer_to_list(erlang:phash2(Path)),
+        "_",
+        integer_to_list(Unique)
+    ]),
+    list_to_atom(NameStr).
+
+%%--------------------------------------------------------------------
+%%  Helper functions
+%%--------------------------------------------------------------------
+
+%% Call CallbackModule:cleanup/1 if it exists, swallowing any exception.
+-spec maybe_cleanup(module(), state()) -> ok.
+maybe_cleanup(Module, CBState) ->
+    case erlang:function_exported(Module, cleanup, 1) of
+        true ->
+            %% Ignore any failure inside the user-supplied cleanup callback.
+            try Module:cleanup(CBState) of
+                _ -> ok
+            catch
+                _:_ -> ok
+            end;
+        false -> ok
+    end.
