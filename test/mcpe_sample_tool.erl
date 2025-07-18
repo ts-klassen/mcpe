@@ -1,6 +1,7 @@
 %%%-------------------------------------------------------------------
 %%% @doc A trivial tool implementation used by the Common Test suite.  Returns
-%%%       the atom <<"done">> when executed.
+%%%       the binary string <<"done">> when executed. If referring to the atom
+%%%       with the same textual value, use 'done' or done.
 %%%-------------------------------------------------------------------
 
 -module(mcpe_sample_tool).
@@ -9,7 +10,6 @@
 
 -export([descriptor/0, execute/2]).
 
--include_lib("kernel/include/logger.hrl").
 
 %%--------------------------------------------------------------------
 %% mcpe_tool callbacks

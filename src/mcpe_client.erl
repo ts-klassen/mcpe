@@ -73,7 +73,13 @@ send(Url, Payload, _Opts) ->
     Headers = [],
     ContentType = "application/json", % httpc expects string
     Request = {Url, Headers, ContentType, Bin},
-    Options = [],
+    %% Set a finite timeout so the client does not hang forever if the server
+    %% fails to respond.  The timeout value is given in milliseconds and
+    %% applies to the entire request/response transaction (see httpc manual).
+    %% A conservative default of 30 seconds is used; this can be made
+    %% configurable via client_opts() in the future if needed.
+    Timeout = 30000, % 30 seconds
+    Options = [{timeout, Timeout}],
     ReqOpts = [{body_format, binary}],
     case httpc:request(post, Request, Options, ReqOpts) of
         {ok, {{_Version, 200, _ReasonPhrase}, _RespHeaders, RespBody}} ->
@@ -97,14 +103,51 @@ ensure_httpc() ->
 
 make_id() -> erlang:unique_integer([monotonic, positive]).
 
+%%
+%% JSON-RPC 2.0 response validator.
+%%
+%% Ensures that the decoded response obeys the following minimal rules:
+%%   * Contains the key "jsonrpc" with the exact value "2.0".
+%%   * Contains **either** a "result" or an "error" member.
+%%
+%% Any violation results in `{error, {protocol_violation, Reason}}` where
+%% `Reason` is helpful for debugging but opaque to callers.
+
 parse_single_response(undefined) -> {ok, undefined};
-parse_single_response(#{ <<"result">> := Result }) -> {ok, Result};
-parse_single_response(#{ <<"error">> := ErrorObj }) -> {error, ErrorObj};
-%% proplist representation
-parse_single_response({Resp}) ->
-    case proplists:get_value(<<"error">>, Resp) of
-        undefined ->
-            {ok, proplists:get_value(<<"result">>, Resp)};
-        Err -> {error, Err}
+
+%% Map representation --------------------------------------------------------
+
+parse_single_response(#{ <<"jsonrpc">> := <<"2.0">> } = Resp) ->
+    HasResult = maps:is_key(<<"result">>, Resp),
+    HasError  = maps:is_key(<<"error">>, Resp),
+    case {HasResult, HasError} of
+        {true, false}  -> {ok, maps:get(<<"result">>, Resp)};
+        {false, true}  -> {error, maps:get(<<"error">>, Resp)};
+        {true, true}   -> {error, {protocol_violation, both_result_and_error}};
+        {false, false} -> {error, {protocol_violation, missing_result_and_error}}
     end;
+
+%% Map that lacks the required "jsonrpc" marker.
+parse_single_response(#{ } = Resp) when is_map(Resp) ->
+    {error, {protocol_violation, missing_jsonrpc}};
+
+%% Proplist representation ---------------------------------------------------
+
+parse_single_response({Resp}) when is_list(Resp) ->
+    JsonRpcVer = proplists:get_value(<<"jsonrpc">>, Resp),
+    case JsonRpcVer of
+        <<"2.0">> ->
+            Result  = proplists:get_value(<<"result">>, Resp, undefined),
+            Error   = proplists:get_value(<<"error">>, Resp, undefined),
+            case {Result, Error} of
+                {R, undefined} when R =/= undefined -> {ok, R};
+                {undefined, E} when E =/= undefined -> {error, E};
+                {R, E} when R =/= undefined, E =/= undefined ->
+                    {error, {protocol_violation, both_result_and_error}};
+                _ -> {error, {protocol_violation, missing_result_and_error}}
+            end;
+        _Other -> {error, {protocol_violation, missing_jsonrpc}}
+    end;
+
+%% Fallback for completely unexpected data structures.
 parse_single_response(Other) -> {error, {unexpected_response, Other}}.

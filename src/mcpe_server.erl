@@ -59,8 +59,16 @@ start_link(Port, CallbackModule, Args, Opts) ->
         false ->
             {error, {invalid_callback_module, CallbackModule}};
         true ->
-            case catch CallbackModule:init(Args) of
-                {'EXIT', Reason} -> {error, {init_failed, Reason}};
+            %% Initialise the callback module, catching only exits.
+            InitRes =
+                try CallbackModule:init(Args) of
+                    {ok, CBState0} -> {ok, CBState0}
+                catch
+                    exit:R -> {error, {init_failed, R}}
+                end,
+
+            case InitRes of
+                {error, _} = Err -> Err;
                 {ok, CBState} ->
                     PathBin = maps:get(path, Opts, <<"/">>),
                     PathStr = binary_to_list(PathBin),
@@ -77,8 +85,12 @@ start_link(Port, CallbackModule, Args, Opts) ->
                     case cowboy:start_clear(make_ref(PathBin, Port),
                                              [{port, Port}],
                                              #{env => #{dispatch => Dispatch}}) of
-                        {ok, Pid} -> {ok, Pid};
-                        {error, Reason} = Err -> Err
+                        {ok, Pid} ->
+                            {ok, Pid};
+
+                        {error, _Reason} = Err ->
+                            maybe_cleanup(CallbackModule, CBState),
+                            Err
                     end
             end
     end.
@@ -87,6 +99,36 @@ start_link(Port, CallbackModule, Args, Opts) ->
 %% suites can run concurrently.
 -spec make_ref(binary(), inet:port_number()) -> atom().
 make_ref(Path, Port) ->
-    NameStr = lists:flatten(["mcpe_listener_", integer_to_list(Port), "_",
-                             integer_to_list(erlang:phash2(Path))]),
+    %% Add a unique component to avoid collisions when the function is called
+    %% multiple times with the same Path/Port combination (for example when
+    %% starting and stopping listeners rapidly in tests). We rely on
+    %% erlang:unique_integer/1 which returns a monotonically increasing
+    %% integer that is unique to the Erlang VM instance.
+    Unique = erlang:unique_integer([monotonic, positive]),
+    NameStr = lists:flatten([
+        "mcpe_listener_",
+        integer_to_list(Port),
+        "_",
+        integer_to_list(erlang:phash2(Path)),
+        "_",
+        integer_to_list(Unique)
+    ]),
     list_to_atom(NameStr).
+
+%%--------------------------------------------------------------------
+%%  Helper functions
+%%--------------------------------------------------------------------
+
+%% Call CallbackModule:cleanup/1 if it exists, swallowing any exception.
+-spec maybe_cleanup(module(), state()) -> ok.
+maybe_cleanup(Module, CBState) ->
+    case erlang:function_exported(Module, cleanup, 1) of
+        true ->
+            %% Ignore any failure inside the user-supplied cleanup callback.
+            try Module:cleanup(CBState) of
+                _ -> ok
+            catch
+                _:_ -> ok
+            end;
+        false -> ok
+    end.

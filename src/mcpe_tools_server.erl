@@ -44,12 +44,15 @@ start_link(Port, ToolModules, Opts) ->
 %%=====================================================================
 
 -spec init(mcpe_server:args()) -> {ok, mcpe_server:state()}.
-init(Args) ->
-    {ok, Args}.
+init(Args = #{tools := ToolMods}) ->
+    %% Build name-to-module map once for fast lookup during execute.
+    ToolMap = maps:from_list([{maps:get(name, M:descriptor()), M} || M <- ToolMods]),
+    {ok, Args#{tool_map => ToolMap}}.
 
 -spec handle(klsn:binstr(), mcpe_client:payload(), mcpe_server:state()) ->
           mcpe_server:handle_result().
-handle(Method, Params, State = #{tools := ToolMods}) ->
+%% Handle incoming JSON-RPC requests.
+handle(Method, Params, State = #{tools := ToolMods, tool_map := ToolMap}) ->
 
     case Method of
         <<"mcp.tools/list">> ->
@@ -57,15 +60,16 @@ handle(Method, Params, State = #{tools := ToolMods}) ->
             {reply, Descriptors, State};
 
         <<"mcp.tools/execute">> ->
-            handle_execute(Params, ToolMods, State);
+            handle_execute(Params, ToolMap, State);
 
         _ -> {error, method_not_found}
     end.
 
-handle_execute(Params, ToolMods, State) when is_map(Params) ->
+%% Execute a tool using the pre-built ToolMap.
+handle_execute(Params, ToolMap, State) when is_map(Params) ->
     Name = maps:get(<<"name">>, Params, undefined),
     Args = maps:get(<<"args">>, Params, #{}),
-    case find_tool(Name, ToolMods) of
+    case find_tool(Name, ToolMap) of
         {ok, Mod} ->
             case Mod:execute(Args, #{caller => self()}) of
                 {ok, Result} -> {reply, Result, State};
@@ -73,15 +77,17 @@ handle_execute(Params, ToolMods, State) when is_map(Params) ->
             end;
         error -> {error, method_not_found}
     end;
-handle_execute(_Other, _ToolMods, _State) ->
+handle_execute(_Other, _ToolMap, _State) ->
     {error, invalid_params}.
 
-find_tool(Name, Modules) ->
-    case lists:filter(fun(M) -> maps:get(name, M:descriptor(), undefined) =:= Name end, Modules) of
-        [Mod|_] -> {ok, Mod};
-        [] -> error
-    end.
+%%--------------------------------------------------------------------
+%% Helper functions
+%%--------------------------------------------------------------------
 
--spec capabilities(mcpe_server:state()) -> {mcpe_server:payload(), mcpe_server:state()}.
-capabilities(State) ->
-    {#{ <<"tools">> => #{ <<"list">> => true, <<"execute">> => true }}, State}.
+%% @private
+%% Fast lookup of a tool by name in the pre-computed ToolMap.
+find_tool(Name, ToolMap) ->
+    case maps:find(Name, ToolMap) of
+        {ok, Mod} -> {ok, Mod};
+        error -> error
+    end.
