@@ -36,22 +36,52 @@
 
 -spec start_link(non_neg_integer(), tool_modules(), mcpe_server:opts()) ->
           {ok, pid()} | {error, term()}.
-start_link(_Port, _ToolModules, _Opts) ->
-    todo.
+start_link(Port, ToolModules, Opts) ->
+    mcpe_server:start_link(Port, ?MODULE, #{tools => ToolModules}, Opts).
 
 %%=====================================================================
 %%  mcpe_server behaviour callbacks
 %%=====================================================================
 
 -spec init(mcpe_server:args()) -> {ok, mcpe_server:state()}.
-init(_Args) ->
-    todo.
+init(Args) ->
+    {ok, Args}.
 
 -spec handle(klsn:binstr(), mcpe_client:payload(), mcpe_server:state()) ->
           mcpe_server:handle_result().
-handle(_, _, _State) ->
-    todo.
+handle(Method, Params, State = #{tools := ToolMods}) ->
+
+    case Method of
+        <<"mcp.tools/list">> ->
+            Descriptors = [M:descriptor() || M <- ToolMods],
+            {reply, Descriptors, State};
+
+        <<"mcp.tools/execute">> ->
+            handle_execute(Params, ToolMods, State);
+
+        _ -> {error, method_not_found}
+    end.
+
+handle_execute(Params, ToolMods, State) when is_map(Params) ->
+    Name = maps:get(<<"name">>, Params, undefined),
+    Args = maps:get(<<"args">>, Params, #{}),
+    case find_tool(Name, ToolMods) of
+        {ok, Mod} ->
+            case Mod:execute(Args, #{caller => self()}) of
+                {ok, Result} -> {reply, Result, State};
+                {error, Reason} -> {error, Reason}
+            end;
+        error -> {error, method_not_found}
+    end;
+handle_execute(_Other, _ToolMods, _State) ->
+    {error, invalid_params}.
+
+find_tool(Name, Modules) ->
+    case lists:filter(fun(M) -> maps:get(name, M:descriptor(), undefined) =:= Name end, Modules) of
+        [Mod|_] -> {ok, Mod};
+        [] -> error
+    end.
 
 -spec capabilities(mcpe_server:state()) -> {mcpe_server:payload(), mcpe_server:state()}.
-capabilities(_State) ->
-    todo.
+capabilities(State) ->
+    {#{ <<"tools">> => #{ <<"list">> => true, <<"execute">> => true }}, State}.
