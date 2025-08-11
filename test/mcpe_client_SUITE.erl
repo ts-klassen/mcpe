@@ -1,4 +1,4 @@
--module(mcp_client_SUITE).
+-module(mcpe_client_SUITE).
 
 -include_lib("common_test/include/ct.hrl").
 
@@ -285,4 +285,3 @@ ensure_http_started() ->
     _ = application:ensure_all_started(ssl),
     application:ensure_all_started(inets),
     ok.
-
