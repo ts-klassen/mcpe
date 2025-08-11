@@ -1,13 +1,10 @@
-{application, mcpe,
- [{description, "Model Context Protocol for Erlang"},
+{application, client,
+ [{description, "An OTP library"},
   {vsn, "0.1.0"},
   {registered, []},
   {applications,
    [kernel,
-    stdlib,
-    jsone,
-    klsn,
-    jsonrpc2
+    stdlib
    ]},
   {env,[]},
   {modules, []},
