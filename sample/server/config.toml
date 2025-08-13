@@ -1,0 +1,3 @@
+[mcp_servers.erlang_echo]
+command = "nc"
+args = ["-U", "/tmp/mcpe_sample_server"]
